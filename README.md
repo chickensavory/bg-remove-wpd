@@ -12,7 +12,7 @@ Repo: https://github.com/chickensavory/bg-remove-wpd :contentReference[oaicite:0
 
 ## What you need
 
-- **Python 3.10+** :contentReference[oaicite:1]{index=1}  
+- **Python 3.9+** :contentReference[oaicite:1]{index=1}  
 - A **remove.bg API key** (get it from remove.bg)
 
 ---
