@@ -7,7 +7,7 @@ name = "removebg-square-cli"
 version = "0.1.0"
 description = "Batch normalize images, remove background via remove.bg, then center on a square canvas."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Sofia" }]
 
