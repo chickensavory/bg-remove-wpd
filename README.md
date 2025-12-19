@@ -1,164 +1,100 @@
+````md
 # bg-remove-wpd (removebg-square-cli)
 
-A tiny “drop images in a folder, run one command” tool that:
-
-1) Normalizes images to PNG (includes some RAW formats via `rawpy`)  
-2) Sends them to the **remove.bg** API  
-3) Centers the cutout on a square canvas with padding (great for product shots / listings)
----
-
-## What you need
-
-- **Python 3.9+**
-- A **remove.bg API key** (get it from remove.bg)
+A simple tool to remove backgrounds using **remove.bg** and output square, padded images  
+(great for product photos and listings).
 
 ---
 
-## Install (pip + GitHub)
+## Requirements
 
-This installs directly from this GitHub repo:
+- Python 3.9+
+- A remove.bg API key (https://www.remove.bg)
+
+---
+
+## Install
 
 ```bash
 python3 -m pip install --user --upgrade pip
 python3 -m pip install --user "git+https://github.com/chickensavory/bg-remove-wpd.git"
 ````
 
-After installing, you should have the command:
+Verify installation:
 
 ```bash
 removebg-square --help
 ```
 
-### If `removebg-square` is “command not found”
-
-That usually means your `--user` scripts folder isn’t on PATH.
-
-* **macOS / Linux**: add this to `~/.bashrc` or `~/.zshrc` then reopen terminal:
-
-  ```bash
-  export PATH="$HOME/.local/bin:$PATH"
-  ```
-* **Windows (PowerShell)**: your user scripts are typically under:
-  `C:\Users\<you>\AppData\Roaming\Python\Python3x\Scripts`
-  Add that folder to your PATH.
-
 ---
 
-## Super simple usage (non-developer mode)
+## One-time setup (required)
 
-1. Create an `input` folder and put images inside (jpg/png/webp/etc.)
-2. Run:
+Before running the tool, you must save your remove.bg API key:
 
 ```bash
-removebg-square
+removebg-square login --api-key YOUR_API_KEY
 ```
 
-### First run: it will ask for your API key once
+This securely stores the key in your system keychain.
 
-On the first run, if no key is found, the tool will prompt:
-
-* Paste your remove.bg API key
-* It attempts to save it securely (OS keychain) so you don’t have to paste again 
-
-Output files go to `output/` by default.
-
----
-
-## What folders does it use?
-
-* **Input:** `./input/`
-* **Output:** `./output/`
-
-If the folders don’t exist, the tool creates them. 
-
----
-
-## Common commands
-
-### Run with custom folders
+To remove the saved key:
 
 ```bash
-removebg-square --input-dir my_photos --output-dir done
-```
-
-### Change output size and padding
-
-```bash
-removebg-square --out-size 1200 --padding 80
-```
-
-### Control remove.bg processing size
-
-remove.bg supports a `size` option like `auto`, `preview`, `full`.
-
-```bash
-removebg-square --remove-size auto
-```
-
----
-
-## API key options (pick ONE)
-
-### Option A: Paste once when prompted (recommended)
-
-Just run `removebg-square` and paste the key when it asks. 
-
-### Option B: Set an environment variable
-
-Useful for servers / automation:
-
-```bash
-export REMOVEBG_API_KEY="YOUR_KEY"
-removebg-square
-```
-
-The CLI checks `REMOVEBG_API_KEY` automatically. 
-
-### Option C: Keychain commands (manual)
-
-You can explicitly save/remove a key:
-
-```bash
-removebg-square login --api-key "YOUR_KEY"
 removebg-square logout
 ```
 
+---
 
+## Usage
 
-### Option D: Pass the key just for one run
+1. Create a folder named `input`
+2. Put your images inside it
+3. Run:
 
 ```bash
-removebg-square --api-key "YOUR_KEY"
+removebg-square run
 ```
 
+Processed images will appear in the `output` folder.
 
+---
+
+## Default folders
+
+* Input: `./input`
+* Output: `./output`
+
+Folders are created automatically if they do not exist.
+
+---
+
+## Common options
+
+Run with custom folders:
+
+```bash
+removebg-square run --input-dir my_photos --output-dir done
+```
+
+Change output size and padding:
+
+```bash
+removebg-square run --out-size 1200 --padding 80
+```
+
+Control remove.bg processing size:
+
+```bash
+removebg-square run --remove-size auto
+```
 
 ---
 
 ## Supported input formats
 
-The tool looks for these extensions in the input folder:
-
 * `.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.tif`, `.tiff`
-* RAW (via rawpy): `.nef`, `.arw`, `.cr3` 
-
----
-
-## Notes / troubleshooting
-
-### RAW support may require system libraries
-
-`rawpy` can require native dependencies (often `libraw`).
-
-* **macOS (Homebrew):**
-
-  ```bash
-  brew install libraw
-  ```
-
-### remove.bg errors / rate limits
-
-If remove.bg returns an error (bad key, rate limit, etc.), the tool prints the HTTP status and error details. 
+* RAW (via rawpy): `.nef`, `.arw`, `.cr3`
 
 ---
 
@@ -167,5 +103,3 @@ If remove.bg returns an error (bad key, rate limit, etc.), the tool prints the H
 ```bash
 python3 -m pip uninstall removebg-square-cli
 ```
-
-(Project package name is `removebg-square-cli`.) 
