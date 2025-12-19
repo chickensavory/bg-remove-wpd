@@ -20,7 +20,6 @@ def run_impl(
     padding: int = 50,
     remove_size: str = "auto",
     api_key: Optional[str] = None,
-    use_keyring: bool = True,
 ) -> None:
     written = process_folder(
         input_dir=input_dir,
@@ -29,9 +28,7 @@ def run_impl(
         out_size=out_size,
         padding=padding,
         remove_size=remove_size,
-        use_keyring=use_keyring,
     )
-
     typer.echo(f"Wrote {len(written)} file(s) to: {output_dir}")
 
 
@@ -44,7 +41,6 @@ def run(
         help="Folder of input images.",
         file_okay=False,
         dir_okay=True,
-        writable=False,
         readable=True,
     ),
     output_dir: Path = typer.Option(
@@ -55,7 +51,6 @@ def run(
         file_okay=False,
         dir_okay=True,
         writable=True,
-        readable=True,
     ),
     out_size: int = typer.Option(
         1000,
@@ -77,12 +72,7 @@ def run(
     api_key: Optional[str] = typer.Option(
         None,
         "--api-key",
-        help="remove.bg API key (overrides env/keychain).",
-    ),
-    use_keyring: bool = typer.Option(
-        True,
-        "--use-keyring/--no-keyring",
-        help="Allow using Keychain if available.",
+        help="remove.bg API key (overrides env var).",
     ),
 ) -> None:
     run_impl(
@@ -92,7 +82,6 @@ def run(
         padding=padding,
         remove_size=remove_size,
         api_key=api_key,
-        use_keyring=use_keyring,
     )
 
 
