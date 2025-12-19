@@ -1,4 +1,3 @@
-````md
 # bg-remove-wpd (removebg-square-cli)
 
 A simple tool to remove backgrounds using **remove.bg** and output square, padded images  
