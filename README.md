@@ -1,4 +1,3 @@
-````md
 # bg-remove-wpd (removebg-square-cli)
 
 A tiny “drop images in a folder, run one command” tool that:
