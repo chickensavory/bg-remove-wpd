@@ -109,14 +109,18 @@ def run(
 ):
     key = resolve_api_key(api_key, use_keyring=use_keyring)
     if not key:
-        print(
-            "[red]No API key found.[/red]\n"
-            "Provide one via:\n"
-            "  - --api-key ...\n"
-            "  - env var REMOVEBG_API_KEY\n"
-            "  - Keychain: removebg-square login --api-key ... (requires keyring extra)"
+        print("[yellow]No API key found.[/yellow]")
+        api_key = typer.prompt(
+            "Paste your remove.bg API key (this will be saved securely)",
+            hide_input=True,
         )
-        raise typer.Exit(code=2)
+        try:
+            _set_key_in_keyring(api_key)
+            print("[green]API key saved. You won’t be asked again.[/green]")
+            key = api_key
+        except Exception:
+            print("[red]Could not save key automatically.[/red]")
+            raise typer.Exit(code=2)
 
     written = process_folder(
         input_dir=input_dir,
