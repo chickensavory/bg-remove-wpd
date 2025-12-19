@@ -5,14 +5,11 @@ A tiny “drop images in a folder, run one command” tool that:
 1) Normalizes images to PNG (includes some RAW formats via `rawpy`)  
 2) Sends them to the **remove.bg** API  
 3) Centers the cutout on a square canvas with padding (great for product shots / listings)
-
-Repo: https://github.com/chickensavory/bg-remove-wpd :contentReference[oaicite:0]{index=0}
-
 ---
 
 ## What you need
 
-- **Python 3.9+** :contentReference[oaicite:1]{index=1}  
+- **Python 3.9+**
 - A **remove.bg API key** (get it from remove.bg)
 
 ---
@@ -159,8 +156,6 @@ The tool looks for these extensions in the input folder:
   brew install libraw
   ```
 
-(You may see install errors if your system is missing `libraw`.) ([GitHub][1])
-
 ### remove.bg errors / rate limits
 
 If remove.bg returns an error (bad key, rate limit, etc.), the tool prints the HTTP status and error details. 
@@ -174,11 +169,3 @@ python3 -m pip uninstall removebg-square-cli
 ```
 
 (Project package name is `removebg-square-cli`.) 
-
-```
-
-A small heads-up: your current repo README on GitHub still says “pipx recommended” (the old version). This replacement README is the “pip install from GitHub with python3” version you asked for, and it matches how the CLI actually behaves (prompt-once key flow, default `input/` → `output/`, etc.). :contentReference[oaicite:13]{index=13}
-::contentReference[oaicite:14]{index=14}
-```
-
-[1]: https://github.com/chickensavory/bg-remove-wpd "GitHub - chickensavory/bg-remove-wpd"
