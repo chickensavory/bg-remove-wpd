@@ -18,6 +18,7 @@ dependencies = [
   "rawpy>=0.20",
   "typer>=0.12",
   "rich>=13.0",
+  "keyring>=25.0",
 ]
 
 [project.optional-dependencies]

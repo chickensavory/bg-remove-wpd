@@ -1,53 +1,185 @@
-# removebg-square-cli
+````md
+# bg-remove-wpd (removebg-square-cli)
 
-Batch:
-1) Normalize to PNG (including RAW: .nef/.arw/.cr3 via rawpy)
-2) Call remove.bg
-3) Center the cutout on a square canvas with padding
+A tiny “drop images in a folder, run one command” tool that:
 
-## Install (recommended via pipx)
+1) Normalizes images to PNG (includes some RAW formats via `rawpy`)  
+2) Sends them to the **remove.bg** API  
+3) Centers the cutout on a square canvas with padding (great for product shots / listings)
 
-```bash
-python -m pip install --upgrade pip
-pipx install .
-Optional Keychain support:
+Repo: https://github.com/chickensavory/bg-remove-wpd :contentReference[oaicite:0]{index=0}
 
-bash
-Copy code
-pipx install ".[keyring]"
-API key (choose one)
-Env var
-bash
-Copy code
-export REMOVEBG_API_KEY="YOUR_KEY"
-removebg-square --input-dir input --output-dir output
-Keychain (macOS)
-bash
-Copy code
-removebg-square login --api-key "YOUR_KEY"
-removebg-square --input-dir input --output-dir output
-Usage
-bash
-Copy code
-removebg-square \
-  --input-dir input \
-  --output-dir output \
-  --out-size 1000 \
-  --padding 50 \
-  --remove-size auto
-Notes
-rawpy may require native dependencies (libraw). On macOS you can usually:
-brew install libraw
 ---
 
-## `.gitignore`
+## What you need
 
-```gitignore
-__pycache__/
-*.pyc
-.venv/
-dist/
-build/
-*.egg-info/
-output/
-input/
+- **Python 3.10+** :contentReference[oaicite:1]{index=1}  
+- A **remove.bg API key** (get it from remove.bg)
+
+---
+
+## Install (pip + GitHub)
+
+This installs directly from this GitHub repo:
+
+```bash
+python3 -m pip install --user --upgrade pip
+python3 -m pip install --user "git+https://github.com/chickensavory/bg-remove-wpd.git"
+````
+
+After installing, you should have the command:
+
+```bash
+removebg-square --help
+```
+
+### If `removebg-square` is “command not found”
+
+That usually means your `--user` scripts folder isn’t on PATH.
+
+* **macOS / Linux**: add this to `~/.bashrc` or `~/.zshrc` then reopen terminal:
+
+  ```bash
+  export PATH="$HOME/.local/bin:$PATH"
+  ```
+* **Windows (PowerShell)**: your user scripts are typically under:
+  `C:\Users\<you>\AppData\Roaming\Python\Python3x\Scripts`
+  Add that folder to your PATH.
+
+---
+
+## Super simple usage (non-developer mode)
+
+1. Create an `input` folder and put images inside (jpg/png/webp/etc.)
+2. Run:
+
+```bash
+removebg-square
+```
+
+### First run: it will ask for your API key once
+
+On the first run, if no key is found, the tool will prompt:
+
+* Paste your remove.bg API key
+* It attempts to save it securely (OS keychain) so you don’t have to paste again 
+
+Output files go to `output/` by default.
+
+---
+
+## What folders does it use?
+
+* **Input:** `./input/`
+* **Output:** `./output/`
+
+If the folders don’t exist, the tool creates them. 
+
+---
+
+## Common commands
+
+### Run with custom folders
+
+```bash
+removebg-square --input-dir my_photos --output-dir done
+```
+
+### Change output size and padding
+
+```bash
+removebg-square --out-size 1200 --padding 80
+```
+
+### Control remove.bg processing size
+
+remove.bg supports a `size` option like `auto`, `preview`, `full`.
+
+```bash
+removebg-square --remove-size auto
+```
+
+---
+
+## API key options (pick ONE)
+
+### Option A: Paste once when prompted (recommended)
+
+Just run `removebg-square` and paste the key when it asks. 
+
+### Option B: Set an environment variable
+
+Useful for servers / automation:
+
+```bash
+export REMOVEBG_API_KEY="YOUR_KEY"
+removebg-square
+```
+
+The CLI checks `REMOVEBG_API_KEY` automatically. 
+
+### Option C: Keychain commands (manual)
+
+You can explicitly save/remove a key:
+
+```bash
+removebg-square login --api-key "YOUR_KEY"
+removebg-square logout
+```
+
+
+
+### Option D: Pass the key just for one run
+
+```bash
+removebg-square --api-key "YOUR_KEY"
+```
+
+
+
+---
+
+## Supported input formats
+
+The tool looks for these extensions in the input folder:
+
+* `.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.tif`, `.tiff`
+* RAW (via rawpy): `.nef`, `.arw`, `.cr3` 
+
+---
+
+## Notes / troubleshooting
+
+### RAW support may require system libraries
+
+`rawpy` can require native dependencies (often `libraw`).
+
+* **macOS (Homebrew):**
+
+  ```bash
+  brew install libraw
+  ```
+
+(You may see install errors if your system is missing `libraw`.) ([GitHub][1])
+
+### remove.bg errors / rate limits
+
+If remove.bg returns an error (bad key, rate limit, etc.), the tool prints the HTTP status and error details. 
+
+---
+
+## Uninstall
+
+```bash
+python3 -m pip uninstall removebg-square-cli
+```
+
+(Project package name is `removebg-square-cli`.) 
+
+```
+
+A small heads-up: your current repo README on GitHub still says “pipx recommended” (the old version). This replacement README is the “pip install from GitHub with python3” version you asked for, and it matches how the CLI actually behaves (prompt-once key flow, default `input/` → `output/`, etc.). :contentReference[oaicite:13]{index=13}
+::contentReference[oaicite:14]{index=14}
+```
+
+[1]: https://github.com/chickensavory/bg-remove-wpd "GitHub - chickensavory/bg-remove-wpd"
