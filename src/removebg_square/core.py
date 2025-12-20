@@ -1,10 +1,12 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Optional
+
 import numpy as np
 import rawpy
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 def pil_to_rgba(pil_img: Image.Image) -> Image.Image:
@@ -76,6 +78,67 @@ def normalize_input_to_png(input_path: Path, out_path: Path) -> Path:
         return out_path
 
     img = Image.open(input_path).convert("RGB")
+    img.save(out_path, format="PNG")
+    return out_path
+
+
+def _safe_exif_transpose(img: Image.Image) -> Image.Image:
+    try:
+        return ImageOps.exif_transpose(img)
+    except Exception:
+        return img
+
+
+def _try_ocr_best_rotation(img_rgb: Image.Image) -> Image.Image:
+    try:
+        import cv2
+        import easyocr
+    except Exception:
+        return img_rgb
+
+    try:
+        reader = easyocr.Reader(["en"], gpu=False)
+
+        def score(pil_img: Image.Image) -> float:
+            arr = np.array(pil_img)
+            if arr.ndim == 3 and arr.shape[2] == 3:
+                bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            else:
+                return 0.0
+            results = reader.readtext(bgr, detail=1, paragraph=False)
+            if not results:
+                return 0.0
+            total = 0.0
+            for _bbox, text, conf in results:
+                t = (text or "").strip()
+                if len(t) >= 2:
+                    total += float(conf) * min(len(t), 20)
+            return total
+
+        candidates = []
+        for angle in (0, 90, 180, 270):
+            if angle == 0:
+                cand = img_rgb
+            else:
+                cand = img_rgb.rotate(angle, expand=True)
+            candidates.append((score(cand), angle, cand))
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        best_score, best_angle, best_img = candidates[0]
+
+        if best_score <= 0.0 or best_angle == 0:
+            return img_rgb
+        return best_img
+    except Exception:
+        return img_rgb
+
+
+def rotate_input_upright(input_path: Path, out_path: Path) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    img = Image.open(input_path).convert("RGB")
+    img = _safe_exif_transpose(img)
+    img = _try_ocr_best_rotation(img)
     img.save(out_path, format="PNG")
     return out_path
 
@@ -154,8 +217,13 @@ def process_folder(
         normalized = normalize_input_to_png(
             path, temp_dir / f"{path.stem}_normalized.png"
         )
+
+        rotated = rotate_input_upright(
+            normalized, temp_dir / f"{path.stem}_rotated.png"
+        )
+
         remove_png_path = removebg_via_requests(
-            normalized, temp_dir, api_key, size=remove_size
+            rotated, temp_dir, api_key, size=remove_size
         )
         removed = Image.open(remove_png_path).convert("RGBA")
 
