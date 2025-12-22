@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "removebg-square-cli"
 version = "0.1.0"
-description = "Batch normalize images, rotate/upright, remove background via remove.bg, then center on a square canvas."
+description = "Batch normalize images, remove background via remove.bg, then center on a square canvas."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -18,19 +18,11 @@ dependencies = [
   "rawpy>=0.20",
   "typer>=0.12",
   "rich>=13.0",
+  "keyring>=25.0",
 ]
 
 [project.optional-dependencies]
 keyring = ["keyring>=25.0"]
-rotate = [
-  "easyocr>=1.7.1",
-  "opencv-python>=4.8.0",
-]
-all = [
-  "keyring>=25.0",
-  "easyocr>=1.7.1",
-  "opencv-python>=4.8.0",
-]
 
 [project.scripts]
 removebg-square = "removebg_square.cli:app"
