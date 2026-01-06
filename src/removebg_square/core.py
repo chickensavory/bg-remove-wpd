@@ -134,7 +134,7 @@ def process_folder(
     output_dir: Path,
     api_key: str,
     out_size: int = 1000,
-    padding: int = 50,
+    padding: int = 112,
     remove_size: str = "auto",
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
