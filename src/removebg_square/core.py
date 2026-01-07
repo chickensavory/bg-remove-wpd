@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Optional
+
 import numpy as np
 import rawpy
 import requests
@@ -20,36 +22,46 @@ def find_nontransparent_bbox(alpha: np.ndarray):
     return x0, y0, x1, y1
 
 
-def cutout_to_square_canvas(
-    obj_rgba: Image.Image, out_size: int, padding: int
+def paste_on_white_canvas(
+    img: Image.Image,
+    out_size: int,
+    left: float,
+    right: float,
+    top: float,
+    bottom: float,
 ) -> Image.Image:
-    obj_rgba = pil_to_rgba(obj_rgba)
-    rgba = np.array(obj_rgba)
-    alpha = rgba[:, :, 3]
+    rgba = pil_to_rgba(img)
+    arr = np.array(rgba)
+    alpha = arr[:, :, 3]
 
     bbox = find_nontransparent_bbox(alpha)
     if bbox is None:
-        return Image.new("RGBA", (out_size, out_size), (0, 0, 0, 0))
+        return Image.new("RGB", (out_size, out_size), (255, 255, 255))
 
     x0, y0, x1, y1 = bbox
-    cropped = obj_rgba.crop((x0, y0, x1 + 1, y1 + 1))
-
+    cropped = rgba.crop((x0, y0, x1 + 1, y1 + 1))
     cw, ch = cropped.size
     if cw <= 0 or ch <= 0:
-        return Image.new("RGBA", (out_size, out_size), (0, 0, 0, 0))
+        return Image.new("RGB", (out_size, out_size), (255, 255, 255))
 
-    target_long = max(1, out_size - 2 * padding)
-    scale = target_long / max(cw, ch)
+    inner_w = out_size - left - right
+    inner_h = out_size - top - bottom
+    if inner_w <= 1 or inner_h <= 1:
+        raise ValueError("Inner area is too small; check margin values")
+
+    scale = min(inner_w / cw, inner_h / ch)
     new_w = max(1, int(round(cw * scale)))
     new_h = max(1, int(round(ch * scale)))
-
     resized = cropped.resize((new_w, new_h), resample=Image.LANCZOS)
 
-    canvas = Image.new("RGBA", (out_size, out_size), (255, 255, 255, 255))
-    x = (out_size - new_w) // 2
-    y = (out_size - new_h) // 2
-    canvas.alpha_composite(resized, (x, y))
-    return canvas
+    inner_x0 = left
+    inner_y0 = top
+    x = int(round(inner_x0 + (inner_w - new_w) / 2))
+    y = int(round(inner_y0 + (inner_h - new_h) / 2))
+
+    temp = Image.new("RGBA", (out_size, out_size), (255, 255, 255, 255))
+    temp.alpha_composite(resized, (x, y))
+    return temp.convert("RGB")
 
 
 def raw_to_rgb_pil(input_path: Path) -> Image.Image:
@@ -65,12 +77,20 @@ def raw_to_rgb_pil(input_path: Path) -> Image.Image:
 def normalize_input_to_png(input_path: Path, out_path: Path) -> Path:
     ext = input_path.suffix.lower()
 
-    if ext in [".png", ".jpeg", ".jpg"]:
+    if ext in [
+        ".png",
+        ".jpeg",
+        ".jpg",
+    ]:
         return input_path
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if ext in [".nef", ".arw", ".cr3"]:
+    if ext in [
+        ".nef",
+        ".arw",
+        ".cr3",
+    ]:
         img = raw_to_rgb_pil(input_path)
         img.save(out_path, format="PNG")
         return out_path
@@ -134,8 +154,12 @@ def process_folder(
     output_dir: Path,
     api_key: str,
     out_size: int = 1000,
-    padding: int = 112,
+    margin_left: float = 111.031,
+    margin_right: float = 113.531,
+    margin_top: float = 112.031,
+    margin_bottom: float = 112.531,
     remove_size: str = "auto",
+    out_ext: str = ".png",
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     input_dir.mkdir(parents=True, exist_ok=True)
@@ -159,10 +183,17 @@ def process_folder(
         )
         removed = Image.open(remove_png_path).convert("RGBA")
 
-        out = cutout_to_square_canvas(removed, out_size=out_size, padding=padding)
+        out_img = paste_on_white_canvas(
+            removed,
+            out_size=out_size,
+            left=margin_left,
+            right=margin_right,
+            top=margin_top,
+            bottom=margin_bottom,
+        )
 
-        out_path = output_dir / f"{path.stem}_{out_size}x{out_size}_pad{padding}.png"
-        out.save(out_path)
+        out_path = output_dir / f"{path.stem}_removebg_{out_size}{out_ext}"
+        out_img.save(out_path)
         print("Wrote:", out_path)
         written.append(out_path)
 
