@@ -154,17 +154,17 @@ def process_folder(
     output_dir: Path,
     api_key: str,
     out_size: int = 1000,
-    margin_left: float = 110,
-    margin_right: float = 110,
-    margin_top: float = 110,
-    margin_bottom: float = 110,
+    margin_left: float = 111,
+    margin_right: float = 111,
+    margin_top: float = 111,
+    margin_bottom: float = 111,
     remove_size: str = "auto",
     out_ext: str = ".png",
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     input_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    
+
     files = iter_input_files(input_dir)
     if not files:
         return []
