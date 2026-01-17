@@ -1,177 +1,316 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
-import typer
-from rich import print
-
-from .core import process_folder
-
-app = typer.Typer(
-    add_completion=False, help="Batch remove.bg + square-canvas formatter."
-)
-
-KEYRING_SERVICE = "removebg-square-cli"
-KEYRING_USERNAME = "removebg_api_key"
+import numpy as np
+import rawpy
+import requests
+import time
+import shutil
+from PIL import Image
 
 
-def _get_key_from_keyring() -> Optional[str]:
-    try:
-        import keyring
-    except Exception:
+def pil_to_rgba(pil_img: Image.Image) -> Image.Image:
+    return pil_img if pil_img.mode == "RGBA" else pil_img.convert("RGBA")
+
+
+def find_nontransparent_bbox(alpha: np.ndarray):
+    ys, xs = np.where(alpha > 0)
+    if xs.size == 0 or ys.size == 0:
         return None
+    x0, x1 = int(xs.min()), int(xs.max())
+    y0, y1 = int(ys.min()), int(ys.max())
+    return x0, y0, x1, y1
+
+
+def paste_on_white_canvas(
+    img: Image.Image,
+    out_size: int,
+    left: int,
+    right: int,
+    top: int,
+    bottom: int,
+) -> Image.Image:
+    left = int(left)
+    right = int(right)
+    top = int(top)
+    bottom = int(bottom)
+
+    if not (left == right == top == bottom == 111):
+        raise ValueError(
+            f"Margins must be exactly 111 on all sides. Got LRTB={left},{right},{top},{bottom}"
+        )
+
+    rgba = pil_to_rgba(img)
+    arr = np.array(rgba)
+    alpha = arr[:, :, 3]
+
+    bbox = find_nontransparent_bbox(alpha)
+    if bbox is None:
+        return Image.new("RGB", (out_size, out_size), (255, 255, 255))
+
+    x0, y0, x1, y1 = bbox
+    cropped = rgba.crop((x0, y0, x1 + 1, y1 + 1))
+    cw, ch = cropped.size
+    if cw <= 0 or ch <= 0:
+        return Image.new("RGB", (out_size, out_size), (255, 255, 255))
+
+    inner_w = out_size - left - right
+    inner_h = out_size - top - bottom
+
+    if inner_w != 778 or inner_h != 778:
+        raise ValueError(
+            f"Inner area must be exactly 778x778. Got {inner_w}x{inner_h} "
+            f"(out_size={out_size}, LRTB={left},{right},{top},{bottom})"
+        )
+
+    if inner_w <= 1 or inner_h <= 1:
+        raise ValueError("Inner area is too small; check margin values")
+
+    scale = min(inner_w / cw, inner_h / ch)
+    new_w = max(1, int(np.floor(cw * scale)))
+    new_h = max(1, int(np.floor(ch * scale)))
+
+    new_w = min(new_w, inner_w)
+    new_h = min(new_h, inner_h)
+
+    resized = cropped.resize((new_w, new_h), resample=Image.LANCZOS)
+
+    x = left + (inner_w - new_w) // 2
+    y = top + (inner_h - new_h) // 2
+
+    x = max(left, min(x, out_size - right - new_w))
+    y = max(top, min(y, out_size - bottom - new_h))
+
+    temp = Image.new("RGBA", (out_size, out_size), (255, 255, 255, 255))
+    temp.alpha_composite(resized, (x, y))
+    return temp.convert("RGB")
+
+
+def raw_to_rgb_pil(input_path: Path) -> Image.Image:
+    with rawpy.imread(str(input_path)) as raw:
+        rgb = raw.postprocess(
+            use_camera_wb=True,
+            no_auto_bright=True,
+            output_bps=8,
+        )
+    return Image.fromarray(rgb, mode="RGB")
+
+
+def normalize_input_to_png(input_path: Path, out_path: Path) -> Path:
+    ext = input_path.suffix.lower()
+
+    if ext in [".png", ".jpeg", ".jpg"]:
+        return input_path
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if ext in [".nef", ".arw", ".cr3"]:
+        img = raw_to_rgb_pil(input_path)
+        img.save(out_path, format="PNG")
+        return out_path
+
+    img = Image.open(input_path).convert("RGB")
+    img.save(out_path, format="PNG")
+    return out_path
+
+
+def _copy_to_bad_folder(
+    src: Path, bad_dir: Path, reason: str, extra_text: Optional[str] = None
+) -> None:
+    bad_dir.mkdir(parents=True, exist_ok=True)
+
+    dst = bad_dir / src.name
     try:
-        return keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+        shutil.copy2(src, dst)
     except Exception:
-        return None
+        pass
 
-
-def _set_key_in_keyring(api_key: str) -> None:
-    import keyring
-
-    keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, api_key)
-
-
-def _delete_key_in_keyring() -> None:
-    import keyring
-
+    note = bad_dir / f"{src.stem}_ERROR.txt"
     try:
-        keyring.delete_password(KEYRING_SERVICE, KEYRING_USERNAME)
+        msg = f"{reason}\n"
+        if extra_text:
+            msg += f"\n{extra_text}\n"
+        note.write_text(msg, encoding="utf-8")
     except Exception:
         pass
 
 
-def resolve_api_key(api_key: Optional[str], use_keyring: bool) -> Optional[str]:
-    if api_key:
-        return api_key
+def removebg_via_requests(
+    input_path: Path,
+    out_dir: Path,
+    api_key: str,
+    bad_dir: Path,
+    size: str = "auto",
+    timeout_s: int = 60,
+) -> Optional[Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{input_path.stem}_removebg.png"
 
-    env_key = os.environ.get("REMOVEBG_API_KEY")
-    if env_key:
-        return env_key
+    url = "https://api.remove.bg/v1.0/removebg"
+    headers = {"X-Api-Key": api_key}
 
-    if use_keyring:
-        kr = _get_key_from_keyring()
-        if kr:
-            return kr
+    try:
+        with input_path.open("rb") as f:
+            files = {"image_file": f}
+            data = {"size": size}
+            resp = requests.post(
+                url, headers=headers, files=files, data=data, timeout=timeout_s
+            )
+    except requests.RequestException as e:
+        _copy_to_bad_folder(
+            src=input_path,
+            bad_dir=bad_dir,
+            reason="remove.bg request failed (network/timeout)",
+            extra_text=str(e),
+        )
+        return None
 
+    if resp.status_code == 200:
+        out_path.write_bytes(resp.content)
+        return out_path
+
+    if 400 <= resp.status_code <= 403:
+        ct = resp.headers.get("Content-Type", "")
+        extra = None
+        if "application/json" in ct:
+            try:
+                extra = str(resp.json())
+            except Exception:
+                extra = resp.text[:2000]
+        else:
+            extra = resp.text[:2000]
+
+        _copy_to_bad_folder(
+            src=input_path,
+            bad_dir=bad_dir,
+            reason=f"remove.bg HTTP {resp.status_code} {resp.reason} (ignored)",
+            extra_text=extra,
+        )
+        return None
+
+    ct = resp.headers.get("Content-Type", "")
+    if "application/json" in ct:
+        try:
+            print("remove.bg error JSON:", resp.json())
+        except Exception:
+            print("remove.bg error body:", resp.text[:2000])
+    else:
+        print("remove.bg error body:", resp.text[:2000])
+
+    resp.raise_for_status()
     return None
 
 
-@app.command()
-def login(
-    api_key: str = typer.Option(..., "--api-key", help="Your remove.bg API key."),
-):
-    try:
-        _set_key_in_keyring(api_key)
-    except ModuleNotFoundError:
-        raise typer.Exit(code=2)
-    print("[green]Saved API key to Keychain.[/green]")
+def iter_input_files(input_dir: Path) -> list[Path]:
+    patterns = [
+        "*.png",
+        "*.jpg",
+        "*.jpeg",
+        "*.webp",
+        "*.bmp",
+        "*.tif",
+        "*.tiff",
+        "*.nef",
+        "*.arw",
+        "*.cr3",
+    ]
+    files: list[Path] = []
+    for pat in patterns:
+        files.extend(input_dir.glob(pat))
+    return sorted(set(files))
 
 
-@app.command()
-def logout():
-    try:
-        _delete_key_in_keyring()
-    except ModuleNotFoundError:
-        raise typer.Exit(code=2)
-    print("[yellow]Removed API key from Keychain (if it existed).[/yellow]")
-
-
-def run_impl(
-    input_dir: Path = Path("input"),
-    output_dir: Path = Path("output"),
+def process_folder(
+    input_dir: Path,
+    output_dir: Path,
+    api_key: str,
     out_size: int = 1000,
-    margin_left: float = 111.031,
-    margin_right: float = 113.531,
-    margin_top: float = 112.031,
-    margin_bottom: float = 112.531,
+    margin_left: int = 111,
+    margin_right: int = 111,
+    margin_top: int = 111,
+    margin_bottom: int = 111,
     remove_size: str = "auto",
-    api_key: Optional[str] = None,
-    use_keyring: bool = True,
-) -> None:
-    key = resolve_api_key(api_key, use_keyring=use_keyring)
-    if not key:
-        print("[yellow]No API key found.[/yellow]")
-        api_key = typer.prompt(
-            "Paste your remove.bg API key (this will be saved securely)",
-            hide_input=True,
+    out_ext: str = ".png",
+) -> list[Path]:
+    if out_size != 1000:
+        raise ValueError(f"out_size must be exactly 1000. Got {out_size}")
+    if not (margin_left == margin_right == margin_top == margin_bottom == 111):
+        raise ValueError(
+            f"Margins must be exactly 111 on all sides. "
+            f"Got LRTB={margin_left},{margin_right},{margin_top},{margin_bottom}"
         )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    input_dir.mkdir(parents=True, exist_ok=True)
+
+    total_t0 = time.time()
+
+    files = iter_input_files(input_dir)
+    if not files:
+        print("No input files found.")
+        return []
+
+    temp_dir = output_dir / "_tmp_removebg"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    bad_dir = output_dir / "bad"
+    written: list[Path] = []
+
+    for idx, path in enumerate(files, start=1):
+        img_t0 = time.time()
+        print(f"[{idx}/{len(files)}] Processing: {path}")
+
         try:
-            _set_key_in_keyring(api_key)
-            print("[green]API key saved. You won’t be asked again.[/green]")
-            key = api_key
-        except Exception:
-            print("[red]Could not save key automatically.[/red]")
-            raise typer.Exit(code=2)
+            normalized = normalize_input_to_png(
+                path, temp_dir / f"{path.stem}_normalized.png"
+            )
+        except Exception as e:
+            _copy_to_bad_folder(
+                path, bad_dir, "Normalize/open failed (skipped)", str(e)
+            )
+            print("  -> Skipped (normalize failed)")
+            continue
 
-    written = process_folder(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        api_key=key,
-        out_size=out_size,
-        margin_left=margin_left,
-        margin_right=margin_right,
-        margin_top=margin_top,
-        margin_bottom=margin_bottom,
-        remove_size=remove_size,
-    )
+        remove_png_path = removebg_via_requests(
+            normalized,
+            temp_dir,
+            api_key,
+            bad_dir=bad_dir,
+            size=remove_size,
+        )
 
-    if not written:
-        print(f"[yellow]No images found in:[/yellow] {input_dir.resolve()}")
-        raise typer.Exit(code=1)
+        if remove_png_path is None:
+            print("  -> Skipped (remove.bg 400–403 or request failure; copied to bad/)")
+            continue
+
+        try:
+            removed = Image.open(remove_png_path).convert("RGBA")
+        except Exception as e:
+            _copy_to_bad_folder(
+                path, bad_dir, "Failed to open remove.bg output (skipped)", str(e)
+            )
+            print("  -> Skipped (could not open remove.bg output)")
+            continue
+
+        out_img = paste_on_white_canvas(
+            removed,
+            out_size=out_size,
+            left=margin_left,
+            right=margin_right,
+            top=margin_top,
+            bottom=margin_bottom,
+        )
+
+        out_path = output_dir / f"{path.stem}_removebg_{out_size}{out_ext}"
+        out_img.save(out_path)
+        written.append(out_path)
+
+        print(f"  Wrote: {out_path}")
+        print(f"  Per-image time: {time.time() - img_t0:.2f}s")
 
     print(
-        f"[green]Done.[/green] Wrote {len(written)} file(s) to {output_dir.resolve()}"
+        f"[TOTAL] Finished {len(written)}/{len(files)} images in {time.time() - total_t0:.2f}s"
     )
-
-
-@app.command()
-def run(
-    input_dir: Path = typer.Option(
-        Path("input"), "--input-dir", "-i", exists=False, file_okay=False, dir_okay=True
-    ),
-    output_dir: Path = typer.Option(
-        Path("output"),
-        "--output-dir",
-        "-o",
-        exists=False,
-        file_okay=False,
-        dir_okay=True,
-    ),
-    out_size: int = typer.Option(1000, "--out-size", min=1),
-    margin_left: float = typer.Option(111.031, "--margin-left", min=0),
-    margin_right: float = typer.Option(113.531, "--margin-right"),
-    margin_top: float = typer.Option(112.031, "--margin-top"),
-    margin_bottom: float = typer.Option(112.531, "--margin-bottom"),
-    remove_size: str = typer.Option(
-        "auto",
-        "--remove-size",
-        help='remove.bg "size" param, e.g. auto, preview, full.',
-    ),
-    api_key: Optional[str] = typer.Option(
-        None, "--api-key", help="remove.bg API key (overrides env/keychain)."
-    ),
-    use_keyring: bool = typer.Option(
-        True, "--use-keyring/--no-keyring", help="Allow using Keychain if available."
-    ),
-):
-    run_impl(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        out_size=out_size,
-        margin_left=margin_left,
-        margin_right=margin_right,
-        margin_top=margin_top,
-        margin_bottom=margin_bottom,
-        remove_size=remove_size,
-        api_key=api_key,
-        use_keyring=use_keyring,
-    )
-
-
-@app.callback(invoke_without_command=True)
-def _default(ctx: typer.Context):
-    if ctx.invoked_subcommand is None:
-        run_impl()
+    return written
