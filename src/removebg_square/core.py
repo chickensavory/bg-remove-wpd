@@ -27,11 +27,16 @@ def find_nontransparent_bbox(alpha: np.ndarray):
 def paste_on_white_canvas(
     img: Image.Image,
     out_size: int,
-    left: float,
-    right: float,
-    top: float,
-    bottom: float,
+    left: int,
+    right: int,
+    top: int,
+    bottom: int,
 ) -> Image.Image:
+    left = int(left)
+    right = int(right)
+    top = int(top)
+    bottom = int(bottom)
+
     rgba = pil_to_rgba(img)
     arr = np.array(rgba)
     alpha = arr[:, :, 3]
@@ -52,14 +57,19 @@ def paste_on_white_canvas(
         raise ValueError("Inner area is too small; check margin values")
 
     scale = min(inner_w / cw, inner_h / ch)
-    new_w = max(1, int(round(cw * scale)))
-    new_h = max(1, int(round(ch * scale)))
+    new_w = max(1, int(np.floor(cw * scale)))
+    new_h = max(1, int(np.floor(ch * scale)))
+
+    new_w = min(new_w, inner_w)
+    new_h = min(new_h, inner_h)
+
     resized = cropped.resize((new_w, new_h), resample=Image.LANCZOS)
 
-    inner_x0 = left
-    inner_y0 = top
-    x = int(round(inner_x0 + (inner_w - new_w) / 2))
-    y = int(round(inner_y0 + (inner_h - new_h) / 2))
+    x = left + (inner_w - new_w) // 2
+    y = top + (inner_h - new_h) // 2
+
+    x = max(left, min(x, out_size - right - new_w))
+    y = max(top, min(y, out_size - bottom - new_h))
 
     temp = Image.new("RGBA", (out_size, out_size), (255, 255, 255, 255))
     temp.alpha_composite(resized, (x, y))
@@ -205,10 +215,10 @@ def process_folder(
     output_dir: Path,
     api_key: str,
     out_size: int = 1000,
-    margin_left: float = 111,
-    margin_right: float = 111,
-    margin_top: float = 111,
-    margin_bottom: float = 111,
+    margin_left: int = 111,
+    margin_right: int = 111,
+    margin_top: int = 111,
+    margin_bottom: int = 111,
     remove_size: str = "auto",
     out_ext: str = ".png",
 ) -> list[Path]:
