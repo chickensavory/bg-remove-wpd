@@ -11,6 +11,8 @@ import shutil
 from PIL import Image
 
 
+# TODO add timeout then process where it last ended
+
 def pil_to_rgba(pil_img: Image.Image) -> Image.Image:
     return pil_img if pil_img.mode == "RGBA" else pil_img.convert("RGBA")
 
@@ -283,7 +285,7 @@ def process_folder(
             bottom=margin_bottom,
         )
 
-        out_path = output_dir / f"{path.stem}_removebg_{out_size}{out_ext}"
+        out_path = output_dir / f"{path.stem}{out_ext}"
         out_img.save(out_path)
         written.append(out_path)
 
