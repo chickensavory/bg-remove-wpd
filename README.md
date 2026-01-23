@@ -43,6 +43,22 @@ To remove the saved key:
 removebg-square logout
 ```
 
+Sometimes macOS doesn’t automatically look in the folder where Python installs commands.
+
+Run:
+
+```bash
+python3 -m site --user-base
+```
+
+If it prints something like `/Users/YOURNAME/Library/Python/3.9`, then run:
+
+```bash
+echo 'export PATH="$HOME/Library/Python/3.9/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+hash -r
+```
+
 ---
 
 ## Usage
@@ -101,4 +117,9 @@ removebg-square run --remove-size auto
 
 ```bash
 python3 -m pip uninstall removebg-square-cli
+```
+
+## Update
+```bash
+python3 -m pip install --user --upgrade --no-cache-dir "git+https://github.com/chickensavory/bg-remove-wpd.git"
 ```
