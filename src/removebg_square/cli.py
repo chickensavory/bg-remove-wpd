@@ -4,8 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-import typer
-from rich import print
+import print
 
 from .core import process_folder
 
@@ -91,6 +90,8 @@ def run_impl(
     remove_size: str = "auto",
     api_key: Optional[str] = None,
     use_keyring: bool = True,
+    embed_xmp: bool = True,
+    xmp_sidecar: bool = False,
 ) -> None:
     key = resolve_api_key(api_key, use_keyring=use_keyring)
     if not key:
@@ -117,6 +118,10 @@ def run_impl(
         margin_top=margin_top,
         margin_bottom=margin_bottom,
         remove_size=remove_size,
+        out_ext=".png",
+        xmp_tool="removebg-square-cli",
+        embed_png_xmp=embed_xmp,
+        also_write_xmp_sidecar=xmp_sidecar,
     )
 
     if not written:
@@ -166,6 +171,16 @@ def run(
         "--use-keyring/--no-keyring",
         help="Allow using Keychain if available.",
     ),
+    embed_xmp: bool = typer.Option(
+        True,
+        "--embed-xmp/--no-embed-xmp",
+        help="Embed XMP into output PNG via iTXt XML:com.adobe.xmp.",
+    ),
+    xmp_sidecar: bool = typer.Option(
+        False,
+        "--xmp-sidecar/--no-xmp-sidecar",
+        help="Also write a .png.xmp sidecar file.",
+    ),
 ):
     run_impl(
         input_dir=input_dir,
@@ -178,6 +193,8 @@ def run(
         remove_size=remove_size,
         api_key=api_key,
         use_keyring=use_keyring,
+        embed_xmp=embed_xmp,
+        xmp_sidecar=xmp_sidecar,
     )
 
 

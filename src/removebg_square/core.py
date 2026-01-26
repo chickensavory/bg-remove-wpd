@@ -10,8 +10,10 @@ import time
 import shutil
 from PIL import Image
 
+from removebg_square.xmp import write_processed_tags
 
 # TODO add timeout then process where it last ended
+
 
 def pil_to_rgba(pil_img: Image.Image) -> Image.Image:
     return pil_img if pil_img.mode == "RGBA" else pil_img.convert("RGBA")
@@ -223,11 +225,15 @@ def process_folder(
     margin_bottom: int = 111,
     remove_size: str = "auto",
     out_ext: str = ".png",
+    xmp_tool: str = "removebg-square-cli",
+    embed_png_xmp: bool = True,
+    also_write_xmp_sidecar: bool = False,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     input_dir.mkdir(parents=True, exist_ok=True)
 
     total_t0 = time.time()
+    run_date = time.strftime("%Y-%m-%d")
 
     files = iter_input_files(input_dir)
     if not files:
@@ -288,6 +294,18 @@ def process_folder(
         out_path = output_dir / f"{path.stem}{out_ext}"
         out_img.save(out_path)
         written.append(out_path)
+
+        tagged = write_processed_tags(
+            out_path,
+            tool=xmp_tool,
+            processed_date=run_date,
+            embed_png=embed_png_xmp,
+            also_write_sidecar=also_write_xmp_sidecar,
+        )
+        if tagged:
+            print(f"  [XMP] tagged: {out_path.name} (ProcessedWith:{xmp_tool})")
+        else:
+            print(f"  [XMP] FAILED to tag: {out_path.name}")
 
         print(f"  Wrote: {out_path}")
         print(f"  Per-image time: {time.time() - img_t0:.2f}s")
