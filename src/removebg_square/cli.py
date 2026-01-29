@@ -4,9 +4,11 @@ import os
 from pathlib import Path
 from typing import Optional
 
-import print
+import requests
+import typer
+from rich import print
 
-from .core import process_folder
+from .core import process_folder, ProcessResult
 
 app = typer.Typer(
     add_completion=False,
@@ -16,29 +18,40 @@ app = typer.Typer(
 KEYRING_SERVICE = "removebg-square-cli"
 KEYRING_USERNAME = "removebg_api_key"
 
+TRACKRING_SERVICE = "removebg-square-tracker"
+TRACK_HF_USERNAME = "hf_access_token"
+TRACK_TOKEN_USERNAME = "tracker_token"
 
-def _get_key_from_keyring() -> Optional[str]:
+TRACK_ENDPOINT = os.environ.get(
+    "REMOVEBG_SQUARE_TRACK_ENDPOINT",
+    "https://sofiakris-bgremoval.hf.space/track",
+)
+
+TRACKING_ENABLED = os.environ.get("REMOVEBG_SQUARE_TRACKING", "1").strip() != "0"
+
+
+def _get_key_from_keyring(service: str, username: str) -> Optional[str]:
     try:
         import keyring
     except Exception:
         return None
     try:
-        return keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+        return keyring.get_password(service, username)
     except Exception:
         return None
 
 
-def _set_key_in_keyring(api_key: str) -> None:
+def _set_key_in_keyring(service: str, username: str, value: str) -> None:
     import keyring
 
-    keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, api_key)
+    keyring.set_password(service, username, value)
 
 
-def _delete_key_in_keyring() -> None:
+def _delete_key_in_keyring(service: str, username: str) -> None:
     import keyring
 
     try:
-        keyring.delete_password(KEYRING_SERVICE, KEYRING_USERNAME)
+        keyring.delete_password(service, username)
     except Exception:
         pass
 
@@ -52,11 +65,86 @@ def resolve_api_key(api_key: Optional[str], use_keyring: bool) -> Optional[str]:
         return env_key
 
     if use_keyring:
-        kr = _get_key_from_keyring()
+        kr = _get_key_from_keyring(KEYRING_SERVICE, KEYRING_USERNAME)
         if kr:
             return kr
 
     return None
+
+
+def _resolve_tracking_tokens(use_keyring: bool) -> tuple[Optional[str], Optional[str]]:
+    if not TRACKING_ENABLED:
+        return None, None
+
+    env_hf = os.environ.get("HF_ACCESS_TOKEN")
+    env_tracker = os.environ.get("TRACKER_TOKEN")
+
+    hf = env_hf.strip() if env_hf else None
+    tr = env_tracker.strip() if env_tracker else None
+
+    if use_keyring:
+        if not hf:
+            hf = _get_key_from_keyring(TRACKRING_SERVICE, TRACK_HF_USERNAME)
+        if not tr:
+            tr = _get_key_from_keyring(TRACKRING_SERVICE, TRACK_TOKEN_USERNAME)
+
+    if not hf:
+        print("[yellow][TRACK][/yellow] Hugging Face token not found.")
+        hf = typer.prompt(
+            "Paste Hugging Face access token (hf_...)", hide_input=True
+        ).strip()
+        try:
+            if use_keyring and hf:
+                _set_key_in_keyring(TRACKRING_SERVICE, TRACK_HF_USERNAME, hf)
+                print(
+                    "[green][TRACK][/green] HF token saved to Keychain. You won’t be asked again."
+                )
+        except Exception:
+            print("[red][TRACK][/red] Could not save HF token to Keychain.")
+
+    if not tr:
+        print("[yellow][TRACK][/yellow] Tracker token not found.")
+        tr = typer.prompt("Paste tracker token (hex/random)", hide_input=True).strip()
+        try:
+            if use_keyring and tr:
+                _set_key_in_keyring(TRACKRING_SERVICE, TRACK_TOKEN_USERNAME, tr)
+                print(
+                    "[green][TRACK][/green] Tracker token saved to Keychain. You won’t be asked again."
+                )
+        except Exception:
+            print("[red][TRACK][/red] Could not save tracker token to Keychain.")
+
+    if not hf or not tr:
+        print("[yellow][TRACK][/yellow] Tracking disabled (missing token(s)).")
+        return None, None
+
+    return hf, tr
+
+
+def _post_counts(
+    hf_token: str, tracker_token: str, processed: int, unprocessed: int
+) -> None:
+    try:
+        resp = requests.post(
+            TRACK_ENDPOINT,
+            headers={
+                "Authorization": f"Bearer {hf_token}",
+                "X-Tracker-Token": tracker_token,
+                "Content-Type": "application/json",
+            },
+            json={"processed": int(processed), "unprocessed": int(unprocessed)},
+            timeout=6,
+        )
+        if resp.status_code >= 200 and resp.status_code < 300:
+            print(
+                f"[dim][TRACK][/dim] sent counts: processed={processed}, unprocessed={unprocessed}"
+            )
+            return
+
+        body = (resp.text or "")[:200].strip()
+        print(f"[yellow][TRACK][/yellow] failed ({resp.status_code}): {body}")
+    except Exception as e:
+        print(f"[yellow][TRACK][/yellow] failed: {type(e).__name__}: {e}")
 
 
 @app.command()
@@ -64,19 +152,46 @@ def login(
     api_key: str = typer.Option(..., "--api-key", help="Your remove.bg API key."),
 ):
     try:
-        _set_key_in_keyring(api_key)
+        _set_key_in_keyring(KEYRING_SERVICE, KEYRING_USERNAME, api_key)
     except ModuleNotFoundError:
         raise typer.Exit(code=2)
-    print("[green]Saved API key to Keychain.[/green]")
+    print("[green]Saved remove.bg API key to Keychain.[/green]")
 
 
 @app.command()
 def logout():
     try:
-        _delete_key_in_keyring()
+        _delete_key_in_keyring(KEYRING_SERVICE, KEYRING_USERNAME)
     except ModuleNotFoundError:
         raise typer.Exit(code=2)
-    print("[yellow]Removed API key from Keychain (if it existed).[/yellow]")
+    print("[yellow]Removed remove.bg API key from Keychain (if it existed).[/yellow]")
+
+
+@app.command()
+def tracker_login(
+    hf_token: str = typer.Option(
+        ..., "--hf-token", help="Hugging Face access token (hf_...)."
+    ),
+    tracker_token: str = typer.Option(
+        ..., "--tracker-token", help="Tracker token (hex/random)."
+    ),
+):
+    try:
+        _set_key_in_keyring(TRACKRING_SERVICE, TRACK_HF_USERNAME, hf_token)
+        _set_key_in_keyring(TRACKRING_SERVICE, TRACK_TOKEN_USERNAME, tracker_token)
+    except ModuleNotFoundError:
+        raise typer.Exit(code=2)
+    print("[green]Saved tracking tokens to Keychain.[/green]")
+
+
+@app.command()
+def tracker_logout():
+    try:
+        _delete_key_in_keyring(TRACKRING_SERVICE, TRACK_HF_USERNAME)
+        _delete_key_in_keyring(TRACKRING_SERVICE, TRACK_TOKEN_USERNAME)
+    except ModuleNotFoundError:
+        raise typer.Exit(code=2)
+    print("[yellow]Removed tracking tokens from Keychain (if they existed).[/yellow]")
 
 
 def run_impl(
@@ -93,22 +208,24 @@ def run_impl(
     embed_xmp: bool = True,
     xmp_sidecar: bool = False,
 ) -> None:
+    hf_token, tracker_token = _resolve_tracking_tokens(use_keyring=use_keyring)
+
     key = resolve_api_key(api_key, use_keyring=use_keyring)
     if not key:
-        print("[yellow]No API key found.[/yellow]")
+        print("[yellow]No remove.bg API key found.[/yellow]")
         api_key = typer.prompt(
             "Paste your remove.bg API key (this will be saved securely)",
             hide_input=True,
         )
         try:
-            _set_key_in_keyring(api_key)
+            _set_key_in_keyring(KEYRING_SERVICE, KEYRING_USERNAME, api_key)
             print("[green]API key saved. You won’t be asked again.[/green]")
             key = api_key
         except Exception:
             print("[red]Could not save key automatically.[/red]")
             raise typer.Exit(code=2)
 
-    written = process_folder(
+    result: ProcessResult = process_folder(
         input_dir=input_dir,
         output_dir=output_dir,
         api_key=key,
@@ -124,13 +241,19 @@ def run_impl(
         also_write_xmp_sidecar=xmp_sidecar,
     )
 
-    if not written:
+    if result.processed == 0 and result.unprocessed == 0:
         print(f"[yellow]No images found in:[/yellow] {input_dir.resolve()}")
         raise typer.Exit(code=1)
 
     print(
-        f"[green]Done.[/green] Wrote {len(written)} file(s) to {output_dir.resolve()}"
+        f"[green]Done.[/green] Wrote {len(result.written)} file(s) to {output_dir.resolve()}"
     )
+    print(
+        f"[cyan]Counts:[/cyan] processed={result.processed}, unprocessed={result.unprocessed}"
+    )
+
+    if hf_token and tracker_token:
+        _post_counts(hf_token, tracker_token, result.processed, result.unprocessed)
 
 
 @app.command()

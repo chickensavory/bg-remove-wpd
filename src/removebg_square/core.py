@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -12,7 +13,12 @@ from PIL import Image
 
 from removebg_square.xmp import write_processed_tags
 
-# TODO add timeout then process where it last ended
+
+@dataclass
+class ProcessResult:
+    written: list[Path]
+    processed: int
+    unprocessed: int
 
 
 def pil_to_rgba(pil_img: Image.Image) -> Image.Image:
@@ -228,7 +234,7 @@ def process_folder(
     xmp_tool: str = "removebg-square-cli",
     embed_png_xmp: bool = True,
     also_write_xmp_sidecar: bool = False,
-) -> list[Path]:
+) -> ProcessResult:
     output_dir.mkdir(parents=True, exist_ok=True)
     input_dir.mkdir(parents=True, exist_ok=True)
 
@@ -238,13 +244,16 @@ def process_folder(
     files = iter_input_files(input_dir)
     if not files:
         print("No input files found.")
-        return []
+        return ProcessResult(written=[], processed=0, unprocessed=0)
 
     temp_dir = output_dir / "_tmp_removebg"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     bad_dir = output_dir / "bad"
     written: list[Path] = []
+
+    processed = 0
+    unprocessed = 0
 
     for idx, path in enumerate(files, start=1):
         img_t0 = time.time()
@@ -259,6 +268,7 @@ def process_folder(
                 path, bad_dir, "Normalize/open failed (skipped)", str(e)
             )
             print("  -> Skipped (normalize failed)")
+            unprocessed += 1
             continue
 
         remove_png_path = removebg_via_requests(
@@ -271,6 +281,7 @@ def process_folder(
 
         if remove_png_path is None:
             print("  -> Skipped (remove.bg 400–403 or request failure; copied to bad/)")
+            unprocessed += 1
             continue
 
         try:
@@ -280,20 +291,35 @@ def process_folder(
                 path, bad_dir, "Failed to open remove.bg output (skipped)", str(e)
             )
             print("  -> Skipped (could not open remove.bg output)")
+            unprocessed += 1
             continue
 
-        out_img = paste_on_white_canvas(
-            removed,
-            out_size=out_size,
-            left=margin_left,
-            right=margin_right,
-            top=margin_top,
-            bottom=margin_bottom,
-        )
+        try:
+            out_img = paste_on_white_canvas(
+                removed,
+                out_size=out_size,
+                left=margin_left,
+                right=margin_right,
+                top=margin_top,
+                bottom=margin_bottom,
+            )
+        except Exception as e:
+            _copy_to_bad_folder(path, bad_dir, "Canvas/paste failed (skipped)", str(e))
+            print("  -> Skipped (paste_on_white_canvas failed)")
+            unprocessed += 1
+            continue
 
         out_path = output_dir / f"{path.stem}{out_ext}"
-        out_img.save(out_path)
+        try:
+            out_img.save(out_path)
+        except Exception as e:
+            _copy_to_bad_folder(path, bad_dir, "Save output failed (skipped)", str(e))
+            print("  -> Skipped (save failed)")
+            unprocessed += 1
+            continue
+
         written.append(out_path)
+        processed += 1
 
         tagged = write_processed_tags(
             out_path,
@@ -311,6 +337,6 @@ def process_folder(
         print(f"  Per-image time: {time.time() - img_t0:.2f}s")
 
     print(
-        f"[TOTAL] Finished {len(written)}/{len(files)} images in {time.time() - total_t0:.2f}s"
+        f"[TOTAL] Finished {processed}/{len(files)} images in {time.time() - total_t0:.2f}s"
     )
-    return written
+    return ProcessResult(written=written, processed=processed, unprocessed=unprocessed)
