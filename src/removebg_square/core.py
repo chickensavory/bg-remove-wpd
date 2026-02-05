@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import rawpy
@@ -34,9 +34,12 @@ def find_nontransparent_bbox(alpha: np.ndarray):
     return x0, y0, x1, y1
 
 
+Size = Union[int, Tuple[int, int]]
+
+
 def paste_on_white_canvas(
     img: Image.Image,
-    out_size: int,
+    out_size: Size,
     left: int,
     right: int,
     top: int,
@@ -47,22 +50,27 @@ def paste_on_white_canvas(
     top = int(top)
     bottom = int(bottom)
 
+    if isinstance(out_size, int):
+        out_w, out_h = out_size, out_size
+    else:
+        out_w, out_h = int(out_size[0]), int(out_size[1])
+
     rgba = pil_to_rgba(img)
     arr = np.array(rgba)
     alpha = arr[:, :, 3]
 
     bbox = find_nontransparent_bbox(alpha)
     if bbox is None:
-        return Image.new("RGB", (out_size, out_size), (255, 255, 255))
+        return Image.new("RGB", (out_w, out_h), (255, 255, 255))
 
     x0, y0, x1, y1 = bbox
     cropped = rgba.crop((x0, y0, x1 + 1, y1 + 1))
     cw, ch = cropped.size
     if cw <= 0 or ch <= 0:
-        return Image.new("RGB", (out_size, out_size), (255, 255, 255))
+        return Image.new("RGB", (out_w, out_h), (255, 255, 255))
 
-    inner_w = out_size - left - right
-    inner_h = out_size - top - bottom
+    inner_w = out_w - left - right
+    inner_h = out_h - top - bottom
     if inner_w <= 1 or inner_h <= 1:
         raise ValueError("Inner area is too small; check margin values")
 
@@ -78,10 +86,10 @@ def paste_on_white_canvas(
     x = left + (inner_w - new_w) // 2
     y = top + (inner_h - new_h) // 2
 
-    x = max(left, min(x, out_size - right - new_w))
-    y = max(top, min(y, out_size - bottom - new_h))
+    x = max(left, min(x, out_w - right - new_w))
+    y = max(top, min(y, out_h - bottom - new_h))
 
-    temp = Image.new("RGBA", (out_size, out_size), (255, 255, 255, 255))
+    temp = Image.new("RGBA", (out_w, out_h), (255, 255, 255, 255))
     temp.alpha_composite(resized, (x, y))
     return temp.convert("RGB")
 
@@ -224,7 +232,7 @@ def process_folder(
     input_dir: Path,
     output_dir: Path,
     api_key: str,
-    out_size: int = 1000,
+    out_size: Size = 1000,
     margin_left: int = 111,
     margin_right: int = 111,
     margin_top: int = 111,

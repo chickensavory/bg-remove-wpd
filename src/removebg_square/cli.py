@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 import requests
 import typer
@@ -12,7 +12,7 @@ from .core import process_folder, ProcessResult
 
 app = typer.Typer(
     add_completion=False,
-    help="Batch remove.bg + square-canvas formatter.",
+    help="Batch remove.bg + padded-canvas formatter.",
 )
 
 KEYRING_SERVICE = "removebg-square-cli"
@@ -135,7 +135,7 @@ def _post_counts(
             json={"processed": int(processed), "unprocessed": int(unprocessed)},
             timeout=6,
         )
-        if resp.status_code >= 200 and resp.status_code < 300:
+        if 200 <= resp.status_code < 300:
             print(
                 f"[dim][TRACK][/dim] sent counts: processed={processed}, unprocessed={unprocessed}"
             )
@@ -194,10 +194,121 @@ def tracker_logout():
     print("[yellow]Removed tracking tokens from Keychain (if they existed).[/yellow]")
 
 
+Size = Union[int, Tuple[int, int]]
+
+PRESETS: dict[str, dict[str, object]] = {
+    "square": {"size": (1000, 1000), "margins": (111, 111, 111, 111)},
+    "square-xl": {"size": (1400, 1400), "margins": (155, 155, 155, 155)},
+    "landscape": {
+        "size": (1920, 1080),
+        "margins": (120, 120, 120, 120),
+    },
+    "portrait": {
+        "size": (1080, 1920),
+        "margins": (120, 120, 120, 120),
+    },
+}
+
+
+def parse_out_size(value: str) -> Size:
+    s = (value or "").strip().lower()
+    if not s:
+        raise typer.BadParameter("out-size cannot be empty")
+
+    if "x" in s:
+        w_str, h_str = s.split("x", 1)
+        try:
+            w, h = int(w_str.strip()), int(h_str.strip())
+        except ValueError:
+            raise typer.BadParameter('out-size must look like "1000" or "1000x1000"')
+        if w < 1 or h < 1:
+            raise typer.BadParameter("out-size width/height must be >= 1")
+        return (w, h)
+
+    try:
+        n = int(s)
+    except ValueError:
+        raise typer.BadParameter('out-size must look like "1000" or "1000x1000"')
+    if n < 1:
+        raise typer.BadParameter("out-size must be >= 1")
+    return n
+
+
+def _size_to_wh(size: Size) -> tuple[int, int]:
+    if isinstance(size, int):
+        return size, size
+    return int(size[0]), int(size[1])
+
+
+def default_margins_for_size(size: Size) -> tuple[int, int, int, int]:
+    w, h = _size_to_wh(size)
+    if w == 1000 and h == 1000:
+        return (111, 111, 111, 111)
+
+    base_ratio = 111 / 1000.0
+    m = int(round(min(w, h) * base_ratio))
+    m = max(0, m)
+    return (m, m, m, m)
+
+
+def resolve_size_and_margins(
+    preset: Optional[str],
+    out_size: str,
+    margin_left: Optional[int],
+    margin_right: Optional[int],
+    margin_top: Optional[int],
+    margin_bottom: Optional[int],
+) -> tuple[Size, int, int, int, int]:
+    user_set_any = any(
+        v is not None for v in (margin_left, margin_right, margin_top, margin_bottom)
+    )
+    user_set_all = all(
+        v is not None for v in (margin_left, margin_right, margin_top, margin_bottom)
+    )
+    if user_set_any and not user_set_all:
+        raise typer.BadParameter(
+            "If you set any margin, you must set all four: "
+            "--margin-left/--margin-right/--margin-top/--margin-bottom"
+        )
+
+    if preset:
+        key = preset.strip().lower()
+        if key not in PRESETS:
+            valid = ", ".join(PRESETS.keys())
+            raise typer.BadParameter(
+                f"Unknown preset '{preset}'. Valid presets: {valid}"
+            )
+
+        size = PRESETS[key]["size"]
+        if user_set_all:
+            ml, mr, mt, mb = (
+                int(margin_left),
+                int(margin_right),
+                int(margin_top),
+                int(margin_bottom),
+            )
+        else:
+            ml, mr, mt, mb = PRESETS[key]["margins"]
+        return size, int(ml), int(mr), int(mt), int(mb)
+
+    size = parse_out_size(out_size)
+    if user_set_all:
+        return (
+            size,
+            int(margin_left),
+            int(margin_right),
+            int(margin_top),
+            int(margin_bottom),
+        )
+
+    ml, mr, mt, mb = default_margins_for_size(size)
+    return size, ml, mr, mt, mb
+
+
 def run_impl(
     input_dir: Path = Path("input"),
     output_dir: Path = Path("output"),
-    out_size: int = 1000,
+    out_size: Size = 1000,
     margin_left: int = 111,
     margin_right: int = 111,
     margin_top: int = 111,
@@ -274,11 +385,40 @@ def run(
         file_okay=False,
         dir_okay=True,
     ),
-    out_size: int = typer.Option(1000, "--out-size", min=1),
-    margin_left: int = typer.Option(111, "--margin-left", min=0),
-    margin_right: int = typer.Option(111, "--margin-right", min=0),
-    margin_top: int = typer.Option(111, "--margin-top", min=0),
-    margin_bottom: int = typer.Option(111, "--margin-bottom", min=0),
+    preset: Optional[str] = typer.Option(
+        None,
+        "--preset",
+        help="Size preset: square, square-xl, landscape, portrait",
+    ),
+    out_size: str = typer.Option(
+        "1000x1000",
+        "--out-size",
+        help='Manual canvas size: "1000" or "WxH" like "1920x1080". Ignored if --preset is set.',
+    ),
+    margin_left: Optional[int] = typer.Option(
+        None,
+        "--margin-left",
+        min=0,
+        help="Left margin (set all four to override defaults).",
+    ),
+    margin_right: Optional[int] = typer.Option(
+        None,
+        "--margin-right",
+        min=0,
+        help="Right margin (set all four to override defaults).",
+    ),
+    margin_top: Optional[int] = typer.Option(
+        None,
+        "--margin-top",
+        min=0,
+        help="Top margin (set all four to override defaults).",
+    ),
+    margin_bottom: Optional[int] = typer.Option(
+        None,
+        "--margin-bottom",
+        min=0,
+        help="Bottom margin (set all four to override defaults).",
+    ),
     remove_size: str = typer.Option(
         "auto",
         "--remove-size",
@@ -305,14 +445,23 @@ def run(
         help="Also write a .png.xmp sidecar file.",
     ),
 ):
-    run_impl(
-        input_dir=input_dir,
-        output_dir=output_dir,
+    resolved_size, ml, mr, mt, mb = resolve_size_and_margins(
+        preset=preset,
         out_size=out_size,
         margin_left=margin_left,
         margin_right=margin_right,
         margin_top=margin_top,
         margin_bottom=margin_bottom,
+    )
+
+    run_impl(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        out_size=resolved_size,
+        margin_left=ml,
+        margin_right=mr,
+        margin_top=mt,
+        margin_bottom=mb,
         remove_size=remove_size,
         api_key=api_key,
         use_keyring=use_keyring,

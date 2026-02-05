@@ -1,7 +1,8 @@
+````md
 # bg-remove-wpd (removebg-square-cli)
 
-A simple tool to remove backgrounds using **remove.bg** and output square, padded images  
-(great for product photos and listings).
+A simple tool to remove backgrounds using **remove.bg** and output padded images  
+(square, landscape, or custom sizes — great for product photos and listings).
 
 ---
 
@@ -84,18 +85,68 @@ Folders are created automatically if they do not exist.
 
 ---
 
-## Common options
+## Size control
+
+You can control the output canvas size in two ways: **presets** or **manual sizes**.
+Only one size is applied per run.
+
+### Presets (recommended)
+
+```bash
+removebg-square run --preset square
+removebg-square run --preset square-xl
+removebg-square run --preset landscape
+removebg-square run --preset portrait
+```
+
+Available presets:
+
+* `square` → 1000 × 1000
+* `square-xl` → 1400 × 1400
+* `landscape` → 1920 × 1080 (16:9)
+* `portrait` → 1080 × 1920 (9:16)
+
+If `--preset` is provided, it takes priority over `--out-size`.
+
+---
+
+### Manual sizes
+
+```bash
+removebg-square run --out-size 1000
+removebg-square run --out-size 1400x1400
+removebg-square run --out-size 1920x1080
+```
+
+Accepted formats:
+
+* `1000` → square (1000 × 1000)
+* `WIDTHxHEIGHT` → rectangular (e.g. `1920x1080`)
+
+---
+
+## Margins (padding)
+
+Padding is controlled per side using margins:
+
+```bash
+removebg-square run \
+  --margin-left 80 \
+  --margin-right 80 \
+  --margin-top 80 \
+  --margin-bottom 80
+```
+
+Margins define the safe area inside the output canvas where the subject is scaled and centered.
+
+---
+
+## Other common options
 
 Run with custom folders:
 
 ```bash
 removebg-square run --input-dir my_photos --output-dir done
-```
-
-Change output size and padding:
-
-```bash
-removebg-square run --out-size 1200 --padding 80
 ```
 
 Control remove.bg processing size:
@@ -119,7 +170,10 @@ removebg-square run --remove-size auto
 python3 -m pip uninstall removebg-square-cli
 ```
 
+---
+
 ## Update
+
 ```bash
 python3 -m pip install --user --upgrade --no-cache-dir "git+https://github.com/chickensavory/bg-remove-wpd.git"
 ```
