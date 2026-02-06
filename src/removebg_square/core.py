@@ -114,11 +114,11 @@ def normalize_input_to_png(input_path: Path, out_path: Path) -> Path:
 
     if ext in [".nef", ".arw", ".cr3"]:
         img = raw_to_rgb_pil(input_path)
-        img.save(out_path, format="PNG")
+        img.save(out_path, format="JPG")
         return out_path
 
     img = Image.open(input_path).convert("RGB")
-    img.save(out_path, format="PNG")
+    img.save(out_path, format="JPG")
     return out_path
 
 
@@ -152,7 +152,7 @@ def removebg_via_requests(
     timeout_s: int = 60,
 ) -> Optional[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{input_path.stem}_removebg.png"
+    out_path = out_dir / f"{input_path.stem}.jpg"
 
     url = "https://api.remove.bg/v1.0/removebg"
     headers = {"X-Api-Key": api_key}
