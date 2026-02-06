@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Any
 
 import numpy as np
 import rawpy
@@ -19,6 +19,9 @@ class ProcessResult:
     written: list[Path]
     processed: int
     unprocessed: int
+    processed_files: list[dict[str, Any]]
+    unprocessed_files: list[dict[str, Any]]
+    run_id: str
 
 
 def pil_to_rgba(pil_img: Image.Image) -> Image.Image:
@@ -124,14 +127,14 @@ def normalize_input_to_png(input_path: Path, out_path: Path) -> Path:
 
 def _copy_to_bad_folder(
     src: Path, bad_dir: Path, reason: str, extra_text: Optional[str] = None
-) -> None:
+) -> Optional[Path]:
     bad_dir.mkdir(parents=True, exist_ok=True)
 
     dst = bad_dir / src.name
     try:
         shutil.copy2(src, dst)
     except Exception:
-        pass
+        dst = None
 
     note = bad_dir / f"{src.stem}_ERROR.txt"
     try:
@@ -142,6 +145,8 @@ def _copy_to_bad_folder(
     except Exception:
         pass
 
+    return dst
+
 
 def removebg_via_requests(
     input_path: Path,
@@ -150,7 +155,7 @@ def removebg_via_requests(
     bad_dir: Path,
     size: str = "auto",
     timeout_s: int = 60,
-) -> Optional[Path]:
+) -> tuple[Optional[Path], Optional[str], Optional[str]]:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{input_path.stem}.jpg"
 
@@ -171,11 +176,11 @@ def removebg_via_requests(
             reason="remove.bg request failed (network/timeout)",
             extra_text=str(e),
         )
-        return None
+        return None, "removebg_request_failed", str(e)
 
     if resp.status_code == 200:
         out_path.write_bytes(resp.content)
-        return out_path
+        return out_path, None, None
 
     if 400 <= resp.status_code <= 403:
         ct = resp.headers.get("Content-Type", "")
@@ -194,19 +199,20 @@ def removebg_via_requests(
             reason=f"remove.bg HTTP {resp.status_code} {resp.reason} (ignored)",
             extra_text=extra,
         )
-        return None
+        return None, f"removebg_http_{resp.status_code}", extra
 
     ct = resp.headers.get("Content-Type", "")
+    extra = None
     if "application/json" in ct:
         try:
-            print("remove.bg error JSON:", resp.json())
+            extra = str(resp.json())
         except Exception:
-            print("remove.bg error body:", resp.text[:2000])
+            extra = resp.text[:2000]
     else:
-        print("remove.bg error body:", resp.text[:2000])
+        extra = resp.text[:2000]
 
     resp.raise_for_status()
-    return None
+    return None, f"removebg_http_{resp.status_code}", extra
 
 
 def iter_input_files(input_dir: Path) -> list[Path]:
@@ -242,6 +248,7 @@ def process_folder(
     xmp_tool: str = "removebg-square-cli",
     embed_png_xmp: bool = True,
     also_write_xmp_sidecar: bool = False,
+    run_id: str = "unknown",
 ) -> ProcessResult:
     output_dir.mkdir(parents=True, exist_ok=True)
     input_dir.mkdir(parents=True, exist_ok=True)
@@ -252,7 +259,14 @@ def process_folder(
     files = iter_input_files(input_dir)
     if not files:
         print("No input files found.")
-        return ProcessResult(written=[], processed=0, unprocessed=0)
+        return ProcessResult(
+            written=[],
+            processed=0,
+            unprocessed=0,
+            processed_files=[],
+            unprocessed_files=[],
+            run_id=run_id,
+        )
 
     temp_dir = output_dir / "_tmp_removebg"
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -263,23 +277,61 @@ def process_folder(
     processed = 0
     unprocessed = 0
 
+    processed_files: list[dict[str, Any]] = []
+    unprocessed_files: list[dict[str, Any]] = []
+
+    def _record_processed(*, src: str, dest: str, seconds: float) -> None:
+        processed_files.append(
+            {
+                "src": src,
+                "dest": dest,
+                "seconds": float(seconds),
+            }
+        )
+
+    def _record_unprocessed(
+        *,
+        src: str,
+        dest: Optional[str],
+        reason: str,
+        error: Optional[str],
+        seconds: float,
+    ) -> None:
+        unprocessed_files.append(
+            {
+                "src": src,
+                "dest": dest or "",
+                "reason": reason,
+                "error": (error or "")[:2000],
+                "seconds": float(seconds),
+            }
+        )
+
     for idx, path in enumerate(files, start=1):
         img_t0 = time.time()
         print(f"[{idx}/{len(files)}] Processing: {path}")
 
+        # 1) Normalize
         try:
             normalized = normalize_input_to_png(
                 path, temp_dir / f"{path.stem}_normalized.png"
             )
         except Exception as e:
-            _copy_to_bad_folder(
+            bad_copy = _copy_to_bad_folder(
                 path, bad_dir, "Normalize/open failed (skipped)", str(e)
             )
             print("  -> Skipped (normalize failed)")
             unprocessed += 1
+            _record_unprocessed(
+                src=path.name,
+                dest=(str(bad_copy.name) if bad_copy else ""),
+                reason="normalize_failed",
+                error=str(e),
+                seconds=time.time() - img_t0,
+            )
             continue
 
-        remove_png_path = removebg_via_requests(
+        remove_png_path, fail_reason, fail_extra = removebg_via_requests(
             normalized,
             temp_dir,
             api_key,
@@ -290,16 +342,30 @@ def process_folder(
         if remove_png_path is None:
             print("  -> Skipped (remove.bg 400–403 or request failure; copied to bad/)")
             unprocessed += 1
+            _record_unprocessed(
+                src=path.name,
+                dest=str((bad_dir / path.name).name),
+                reason=fail_reason or "removebg_failed",
+                error=fail_extra,
+                seconds=time.time() - img_t0,
+            )
             continue
 
         try:
             removed = Image.open(remove_png_path).convert("RGBA")
         except Exception as e:
-            _copy_to_bad_folder(
+            bad_copy = _copy_to_bad_folder(
                 path, bad_dir, "Failed to open remove.bg output (skipped)", str(e)
             )
             print("  -> Skipped (could not open remove.bg output)")
             unprocessed += 1
+            _record_unprocessed(
+                src=path.name,
+                dest=(str(bad_copy.name) if bad_copy else ""),
+                reason="open_removebg_output_failed",
+                error=str(e),
+                seconds=time.time() - img_t0,
+            )
             continue
 
         try:
@@ -312,18 +378,36 @@ def process_folder(
                 bottom=margin_bottom,
             )
         except Exception as e:
-            _copy_to_bad_folder(path, bad_dir, "Canvas/paste failed (skipped)", str(e))
+            bad_copy = _copy_to_bad_folder(
+                path, bad_dir, "Canvas/paste failed (skipped)", str(e)
+            )
             print("  -> Skipped (paste_on_white_canvas failed)")
             unprocessed += 1
+            _record_unprocessed(
+                src=path.name,
+                dest=(str(bad_copy.name) if bad_copy else ""),
+                reason="canvas_paste_failed",
+                error=str(e),
+                seconds=time.time() - img_t0,
+            )
             continue
 
         out_path = output_dir / f"{path.stem}{out_ext}"
         try:
             out_img.save(out_path)
         except Exception as e:
-            _copy_to_bad_folder(path, bad_dir, "Save output failed (skipped)", str(e))
+            bad_copy = _copy_to_bad_folder(
+                path, bad_dir, "Save output failed (skipped)", str(e)
+            )
             print("  -> Skipped (save failed)")
             unprocessed += 1
+            _record_unprocessed(
+                src=path.name,
+                dest=(str(bad_copy.name) if bad_copy else ""),
+                reason="save_failed",
+                error=str(e),
+                seconds=time.time() - img_t0,
+            )
             continue
 
         written.append(out_path)
@@ -342,9 +426,19 @@ def process_folder(
             print(f"  [XMP] FAILED to tag: {out_path.name}")
 
         print(f"  Wrote: {out_path}")
-        print(f"  Per-image time: {time.time() - img_t0:.2f}s")
+        sec = time.time() - img_t0
+        print(f"  Per-image time: {sec:.2f}s")
+
+        _record_processed(src=path.name, dest=out_path.name, seconds=sec)
 
     print(
         f"[TOTAL] Finished {processed}/{len(files)} images in {time.time() - total_t0:.2f}s"
     )
-    return ProcessResult(written=written, processed=processed, unprocessed=unprocessed)
+    return ProcessResult(
+        written=written,
+        processed=processed,
+        unprocessed=unprocessed,
+        processed_files=processed_files,
+        unprocessed_files=unprocessed_files,
+        run_id=run_id,
+    )

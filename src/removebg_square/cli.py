@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, Any
 
 import requests
 import typer
 from rich import print
+
+from uuid import uuid4
+import time
 
 from .core import process_folder, ProcessResult
 
@@ -121,9 +124,28 @@ def _resolve_tracking_tokens(use_keyring: bool) -> tuple[Optional[str], Optional
     return hf, tr
 
 
-def _post_counts(
-    hf_token: str, tracker_token: str, processed: int, unprocessed: int
+def _post_run(
+    hf_token: str,
+    tracker_token: str,
+    *,
+    run_id: str,
+    processed: int,
+    unprocessed: int,
+    processed_files: list[dict[str, Any]],
+    unprocessed_files: list[dict[str, Any]],
+    elapsed_s: float,
+    tool: str,
 ) -> None:
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "tool": tool,
+        "processed": int(processed),
+        "unprocessed": int(unprocessed),
+        "elapsed_s": float(elapsed_s),
+        "processed_files": processed_files,
+        "unprocessed_files": unprocessed_files,
+    }
+
     try:
         resp = requests.post(
             TRACK_ENDPOINT,
@@ -132,16 +154,19 @@ def _post_counts(
                 "X-Tracker-Token": tracker_token,
                 "Content-Type": "application/json",
             },
-            json={"processed": int(processed), "unprocessed": int(unprocessed)},
-            timeout=6,
+            json=payload,
+            timeout=12,
         )
+
         if 200 <= resp.status_code < 300:
             print(
-                f"[dim][TRACK][/dim] sent counts: processed={processed}, unprocessed={unprocessed}"
+                f"[dim][TRACK][/dim] sent run {run_id}: "
+                f"processed={processed}, unprocessed={unprocessed}, "
+                f"files={len(processed_files) + len(unprocessed_files)}"
             )
             return
 
-        body = (resp.text or "")[:200].strip()
+        body = (resp.text or "")[:800].strip()
         print(f"[yellow][TRACK][/yellow] failed ({resp.status_code}): {body}")
     except Exception as e:
         print(f"[yellow][TRACK][/yellow] failed: {type(e).__name__}: {e}")
@@ -336,6 +361,9 @@ def run_impl(
             print("[red]Could not save key automatically.[/red]")
             raise typer.Exit(code=2)
 
+    run_id = str(uuid4())
+    t0 = time.time()
+
     result: ProcessResult = process_folder(
         input_dir=input_dir,
         output_dir=output_dir,
@@ -346,10 +374,11 @@ def run_impl(
         margin_top=margin_top,
         margin_bottom=margin_bottom,
         remove_size=remove_size,
-        out_ext=".png",
+        out_ext=".jpg",
         xmp_tool="removebg-square-cli",
         embed_png_xmp=embed_xmp,
         also_write_xmp_sidecar=xmp_sidecar,
+        run_id=run_id,
     )
 
     if result.processed == 0 and result.unprocessed == 0:
@@ -364,7 +393,17 @@ def run_impl(
     )
 
     if hf_token and tracker_token:
-        _post_counts(hf_token, tracker_token, result.processed, result.unprocessed)
+        _post_run(
+            hf_token,
+            tracker_token,
+            run_id=run_id,
+            processed=result.processed,
+            unprocessed=result.unprocessed,
+            processed_files=result.processed_files,
+            unprocessed_files=result.unprocessed_files,
+            elapsed_s=(time.time() - t0),
+            tool="removebg-square-cli",
+        )
 
 
 @app.command()
